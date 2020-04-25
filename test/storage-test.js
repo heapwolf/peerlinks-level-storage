@@ -222,7 +222,7 @@ describe('Storage', function () {
     assert.deepStrictEqual(hashes2.map((h) => h.toString()), ['b', 'a'])
   })
 
-  /* it('should preserve order of hashes in getMessages', async () => {
+  it('should preserve order of hashes in getMessages', async () => {
     await storage.addMessage(msg('a', 0))
     await storage.addMessage(msg('c', 1))
     await storage.addMessage(msg('b', 1))
@@ -298,5 +298,5 @@ describe('Storage', function () {
 
     await storage.removeChannelMessages(b.channelId)
     assert.ok(!(await storage.hasMessage(b.channelId, b.hash)))
-  }) */
+  })
 })

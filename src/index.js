@@ -240,27 +240,27 @@ export default class Memory {
     const prefix = [MSG, d64.encode(channelId)]
 
     const params = {
-      limit,
       values: false,
       reverse
     }
 
-    if (reverse) {
-      params.lte = [...prefix]
-    } else {
-      params.gte = [...prefix]
-      params.lte = [...prefix, '~']
+    params.gte = [...prefix]
+    params.lte = [...prefix, '~']
+
+    if (!offset) {
+      params.limit = limit
     }
 
     const itr = iterator(this.db, params)
 
     const results = []
-    let count = 0
+    let skipped = 0
 
     for await (const { err, data } of itr) {
       if (err) return { err }
 
-      if (offset && (count++ < offset)) {
+      if (offset && (skipped < offset)) {
+        skipped++
         continue
       }
 
@@ -406,28 +406,26 @@ export default class Memory {
 
   async removeChannelMessages (channelId) {
     const key = d64.encode(channelId)
-    const prefix = [MSG_IDX, key]
 
     const itr = iterator(this.db, {
-      gte: [...prefix, charwise.LO],
-      lte: [...prefix, charwise.HI]
+      gte: [MSG, key],
+      lte: [MSG, key, '~']
     })
 
     const batch = []
 
     for await (const { err, data } of itr) {
       if (err) return { err }
-
-      const { key } = data
-
-      batch.push({ type: 'del', key })
+      batch.push({ type: 'del', key: data.key })
     }
 
     try {
-      this.db.batch(batch)
+      await this.db.batch(batch)
     } catch (err) {
       return { err }
     }
+
+    return {}
   }
 
   //
