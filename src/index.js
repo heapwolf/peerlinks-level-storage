@@ -1,4 +1,36 @@
 import { Buffer } from 'buffer'
+import level from 'level'
+import charwise from 'charwise-compact'
+import d64 from 'd64'
+
+const PREFIX_MSG_IDX = 0
+const PREFIX_MSG = 1
+const PREFIX_LEAVE = 2
+
+function iterator (ldb, opts) {
+  const it = ldb.iterator(opts)
+
+  return {
+    [Symbol.asyncIterator] () {
+      return this
+    },
+    next: () => {
+      return new Promise(resolve => {
+        it.next((err, key, value) => {
+          const hasKey = typeof key !== 'undefined'
+          const hasValue = typeof value !== 'undefined'
+
+          if (!hasKey && !hasValue) {
+            return it.end(() => resolve({ done: true }))
+          }
+
+          const data = { key, value }
+          resolve({ value: { err, data } })
+        })
+      })
+    }
+  }
+}
 
 export default class Memory {
   /**
@@ -11,10 +43,22 @@ export default class Memory {
     this.entities = new Map()
   }
 
-  async open () {
+  async open (location = './test/db') {
+    if (this.db) return this.db
+
+    const opts = {
+      encode: JSON.stringify,
+      keyEncode: charwise.encode,
+      valueEncoding: 'json',
+      decode: JSON.parse
+    }
+
+    this.db = await level(location, opts)
   }
 
   async close () {
+    if (!this.db) return
+    await this.db.close()
   }
 
   /**
@@ -24,40 +68,44 @@ export default class Memory {
    * @returns {Promise}
    */
   async addMessage (message) {
-    const data = this.getChannelData(message.channelId, true)
+    const channelId = d64.encode(message.channelId)
+    const height = message.height
+    const hash = d64.encode(message.hash)
 
-    const hash = message.hash.toString('hex')
-    if (data.messageByHash.has(hash)) {
-      // Duplicate
-      return
+    //
+    // The key will be scanable and contain data (fast ranges)
+    //
+    const key = [PREFIX_MSG, channelId, height, hash]
+
+    //
+    // An index to directly look up a message
+    //
+    const heightByHashIndex = [PREFIX_MSG_IDX, channelId, hash]
+
+    const value = {
+      channelId,
+      hash,
+      height,
+      parents: message.parents,
+      data: message.data.toString()
     }
 
-    const serialized = message.data
-
-    // CRDT order
-    data.messages.push({
-      height: message.height,
-      hash: message.hash,
-      parents: message.parents,
-      serialized
-    })
-    // TODO(indutny): binary insert?
-    data.messages.sort((a, b) => {
-      if (a.height < b.height) {
-        return -1
-      } else if (a.height > b.height) {
-        return 1
-      }
-
-      return Buffer.compare(a.hash, b.hash)
-    })
-
-    data.messageByHash.set(hash, serialized)
+    const batch = [
+      { type: 'put', key, value },
+      { type: 'put', key: heightByHashIndex, value: height },
+      { type: 'put', key: [PREFIX_LEAVE, channelId, height], value: hash }
+    ]
 
     for (const hash of message.parents) {
-      data.leaves.delete(hash.toString('hex'))
+      const key = [PREFIX_LEAVE, channelId, hash]
+      batch.push({ type: 'del', key })
     }
-    data.leaves.add(hash)
+
+    try {
+      await this.db.batch(batch)
+    } catch (err) {
+      return { err }
+    }
   }
 
   /**
@@ -67,7 +115,25 @@ export default class Memory {
    * @returns {Promise}
    */
   async getMessageCount (channelId) {
-    return this.getChannelData(channelId).messages.length
+    const prefix = [PREFIX_MSG]
+    const params = {
+      gte: [...prefix],
+      lte: [...prefix, '~']
+    }
+
+    const itr = iterator(this.db, params)
+
+    let count = 0
+
+    for await (const { err } of itr) {
+      if (err) {
+        return { err }
+      }
+
+      ++count
+    }
+
+    return count
   }
 
   async getEntityCount () {
@@ -81,12 +147,23 @@ export default class Memory {
    * @returns {Promise} array of resulting hashes
    */
   async getLeafHashes (channelId) {
-    const hashes = Array.from(this.getChannelData(channelId).leaves)
+    const prefix = [PREFIX_LEAVE, d64.encode(channelId)]
+
+    const itr = iterator(this.db, {
+      gte: [...prefix],
+      lte: [...prefix, '~']
+    })
+
     const result = []
-    for (const hex of hashes) {
-      const hash = Buffer.from(hex, 'hex')
-      result.push(hash)
+
+    for await (const { err, data } of itr) {
+      if (err) {
+        return { err }
+      }
+
+      result.push(d64.decode(data.value))
     }
+
     return result
   }
 
@@ -97,8 +174,19 @@ export default class Memory {
    * @returns {Promise} boolean value: `true` - present, `false` - not present
    */
   async hasMessage (channelId, hash) {
-    const data = this.getChannelData(channelId)
-    return data.messageByHash.has(hash.toString('hex'))
+    const key = [
+      PREFIX_MSG_IDX,
+      d64.encode(channelId),
+      d64.encode(hash)
+    ]
+
+    try {
+      await this.db.get(key)
+    } catch (err) {
+      return false
+    }
+
+    return true
   }
 
   /**
@@ -109,8 +197,36 @@ export default class Memory {
    * @returns {Promise} `Message` instance or `undefined`
    */
   async getMessage (channelId, hash) {
-    const data = this.getChannelData(channelId)
-    return data.messageByHash.get(hash.toString('hex'))
+    const index = [
+      PREFIX_MSG_IDX,
+      d64.encode(channelId),
+      d64.encode(hash)
+    ]
+
+    let height = 0
+
+    try {
+      height = await this.db.get(index)
+    } catch (err) {
+      return { err }
+    }
+
+    const key = [
+      PREFIX_MSG,
+      d64.encode(channelId),
+      height,
+      d64.encode(hash)
+    ]
+
+    let value = null
+
+    try {
+      value = await this.db.get(key)
+    } catch (err) {
+      return { err }
+    }
+
+    return value.data
   }
 
   /**
@@ -137,71 +253,198 @@ export default class Memory {
    * @param {limit} offset - Maximum number of messages to return
    * @returns {Promise} Array of `Message` instances
    */
-  async getHashesAtOffset (channelId, offset, limit) {
-    const data = this.getChannelData(channelId)
-    return data.messages.slice(offset, offset + limit).map((message) => {
-      return message.hash
-    })
+  async getHashesAtOffset (channelId, offset, limit, reverse) {
+    const prefix = [
+      PREFIX_MSG_IDX,
+      d64.encode(channelId)
+    ]
+
+    const params = {
+      gte: [...prefix, offset],
+      lte: [...prefix, '~'],
+      limit,
+      reverse
+    }
+
+    const itr = iterator(this.db, params)
+
+    const results = []
+
+    for await (const { err, data } of itr) {
+      if (err) {
+        return { err }
+      }
+
+      const key = data.key.split(',')
+      results.push(d64.decode(key.pop()))
+    }
+
+    return results
   }
 
   async getReverseHashesAtOffset (channelId, offset, limit) {
-    const data = this.getChannelData(channelId)
-    const end = Math.max(data.messages.length - offset, 0)
-    const start = Math.max(data.messages.length - offset - limit, 0)
-    return data.messages.slice(start, end).reverse().map((message) => {
-      return message.hash
-    })
+    return this.getHashesAtOffset(channelId, offset, limit, true)
   }
 
   async query (channelId, cursor, isBackward, limit) {
-    // NOTE: It is hard to implement this atomically, and it is not used anyway
-    if (isBackward && !cursor.hash) {
-      throw new Error('Backwards query by height is not supported')
+    const cid = d64.encode(channelId)
+    let start = []
+    const defaults = {
+      abbreviatedMessages: [],
+      forwardHash: null,
+      backwardHash: null
     }
 
-    const data = this.getChannelData(channelId)
+    //
+    // We will either know cursor.height or cursor.hash.
+    //
+    if (cursor.height) {
+      start = [PREFIX_MSG, cid, cursor.height]
+    }
 
-    // TODO(indutny): binary search?
-    const index = data.messages.findIndex(cursor.hash ? (message) => {
-      return cursor.hash.equals(message.hash)
-    } : (message) => {
-      return message.height === cursor.height
-    })
+    //
+    // When query by hash, we need to find the height
+    // of the hash that was provided by the cursor.
+    //
+    if (cursor.hash) {
+      const index = [
+        PREFIX_MSG_IDX,
+        d64.encode(channelId),
+        d64.encode(cursor.hash)
+      ]
 
-    // We are lenient
-    if (index === -1) {
+      let height = 0
+
+      try {
+        height = await this.db.get(index)
+      } catch (err) {
+        if (err.notFound) return defaults
+        return { err }
+      }
+
+      start = [PREFIX_MSG, cid, height, d64.encode(cursor.hash)]
+    }
+
+    const params = {
+      limit,
+      reverse: isBackward
+    }
+
+    if (isBackward) {
+      params.lte = start
+      // params.gte = [PREFIX_MSG, cid]
+    } else {
+      params.gte = start
+      params.lte = [PREFIX_MSG, cid, '~']
+    }
+
+    //
+    // if there is no hash, we will continue by height (fast),
+    // otherwise this will essentially be a scan for the hash.
+    //
+    const itr = iterator(this.db, params)
+
+    const results = []
+    let count = 0
+    let lastKey = null
+    let head = null
+
+    for await (const { err, data } of itr) {
+      if (err) {
+        return { err }
+      }
+
+      lastKey = data.key
+      count++
+
+      if (count === 1) {
+        head = data.value
+
+        // skip self, according to the protocol, use GT instead?
+        if (isBackward) continue
+      }
+
+      results.push(data.value)
+    }
+
+    if (count === 0) {
       return { abbreviatedMessages: [], forwardHash: null, backwardHash: null }
     }
 
-    let start
-    let end
+    const abbreviatedMessages = results.map(({ hash, parents }) => {
+      hash = d64.decode(hash)
+      return { hash, parents }
+    })
+
+    const result = {
+      abbreviatedMessages
+    }
+
+    //
+    // A second iterator gets the next key
+    //
+    const params2 = {
+      reverse: isBackward,
+      limit: 1
+    }
+
     if (isBackward) {
-      start = Math.max(0, index - limit)
-      end = index
+      params2.lt = lastKey
+      params2.gt = [PREFIX_MSG, cid]
     } else {
-      start = index
-      end = Math.min(data.messages.length, index + limit)
+      params2.gt = lastKey
+      params2.lt = [PREFIX_MSG, cid, '~']
     }
 
-    const messages = data.messages.slice(start, end)
+    const itr2 = iterator(this.db, params2)
 
-    const backwardHash = start === 0 ? null : messages[0].hash
-    const forwardHash = end === data.messages.length ? null
-      : data.messages[end].hash
+    let next = null
 
-    return {
-      abbreviatedMessages: messages.map(({ hash, parents }) => {
-        return { hash, parents }
-      }),
-      forwardHash,
-      backwardHash
+    for await (const { err, data } of itr2) {
+      if (err) {
+        return { err }
+      }
+
+      next = data.value
     }
+
+    if (isBackward) {
+      result.forwardHash = d64.decode(head.hash)
+      result.backwardHash = next ? d64.decode(next.hash) : null
+    } else {
+      result.backwardHash = d64.decode(head.hash)
+      result.forwardHash = next ? d64.decode(next.hash) : null
+    }
+
+    return result
   }
 
   async removeChannelMessages (channelId) {
-    const key = channelId.toString('hex')
+    const key = d64.encode(channelId)
+    const prefix = [PREFIX_MSG_IDX, key]
 
-    this.channelData.delete(key)
+    const itr = iterator(this.db, {
+      gte: [...prefix, charwise.LO],
+      lte: [...prefix, charwise.HI]
+    })
+
+    const batch = []
+
+    for await (const { err, data } of itr) {
+      if (err) {
+        return { err }
+      }
+
+      const { key } = data
+
+      batch.push({ type: 'del', key })
+    }
+
+    try {
+      this.db.batch(batch)
+    } catch (err) {
+      return { err }
+    }
   }
 
   //
@@ -251,29 +494,9 @@ export default class Memory {
   //
 
   async clear () {
-    this.channelData.clear()
-    this.channels.clear()
   }
 
   // Private
-
-  getChannelData (channelId, create = false) {
-    const key = channelId.toString('hex')
-
-    if (this.channelData.has(key)) {
-      return this.channelData.get(key)
-    }
-
-    const data = {
-      messages: [],
-      messageByHash: new Map(),
-      leaves: new Set()
-    }
-    if (create) {
-      this.channelData.set(key, data)
-    }
-    return data
-  }
 
   encodeHashList (list) {
     let size = 0
