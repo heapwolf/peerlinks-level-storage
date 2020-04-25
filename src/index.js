@@ -240,11 +240,16 @@ export default class Memory {
     const prefix = [MSG, d64.encode(channelId)]
 
     const params = {
-      gte: [...prefix],
-      lte: [...prefix, '~'],
       limit,
       values: false,
       reverse
+    }
+
+    if (reverse) {
+      params.lte = [...prefix]
+    } else {
+      params.gte = [...prefix]
+      params.lte = [...prefix, '~']
     }
 
     const itr = iterator(this.db, params)
