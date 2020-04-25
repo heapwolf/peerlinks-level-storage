@@ -3,9 +3,10 @@ import level from 'level'
 import charwise from 'charwise-compact'
 import d64 from 'd64'
 
-const PREFIX_MSG_IDX = 0
-const PREFIX_MSG = 1
-const PREFIX_LEAVE = 2
+const MSG_IDX = 0
+const MSG = 1
+const PARENT = 2
+const ENTITY = 3
 
 function iterator (ldb, opts) {
   const it = ldb.iterator(opts)
@@ -72,32 +73,29 @@ export default class Memory {
     const height = message.height
     const hash = d64.encode(message.hash)
 
-    //
     // The key will be scanable and contain data (fast ranges)
-    //
-    const key = [PREFIX_MSG, channelId, height, hash]
+    const key = [MSG, channelId, height, hash]
 
-    //
     // An index to directly look up a message
-    //
-    const heightByHashIndex = [PREFIX_MSG_IDX, channelId, hash]
+    const heightByHashIndex = [MSG_IDX, channelId, hash]
 
     const value = {
       channelId,
       hash,
       height,
-      parents: message.parents,
-      data: message.data.toString()
+      // parents: this.encodeHashList(message.parents).map(hash => d64.encode(hash)),
+      parents: message.parents.map(hash => d64.encode(hash)),
+      data: d64.encode(message.data)
     }
 
     const batch = [
       { type: 'put', key, value },
       { type: 'put', key: heightByHashIndex, value: height },
-      { type: 'put', key: [PREFIX_LEAVE, channelId, height], value: hash }
+      { type: 'put', key: [PARENT, channelId, hash], value: hash }
     ]
 
-    for (const hash of message.parents) {
-      const key = [PREFIX_LEAVE, channelId, hash]
+    for (const parentHash of message.parents) {
+      const key = [PARENT, channelId, d64.encode(parentHash)]
       batch.push({ type: 'del', key })
     }
 
@@ -115,7 +113,7 @@ export default class Memory {
    * @returns {Promise}
    */
   async getMessageCount (channelId) {
-    const prefix = [PREFIX_MSG]
+    const prefix = [MSG]
     const params = {
       gte: [...prefix],
       lte: [...prefix, '~']
@@ -136,10 +134,6 @@ export default class Memory {
     return count
   }
 
-  async getEntityCount () {
-    return this.entities.size
-  }
-
   /**
    * Get current leaves for the channel.
    *
@@ -147,7 +141,7 @@ export default class Memory {
    * @returns {Promise} array of resulting hashes
    */
   async getLeafHashes (channelId) {
-    const prefix = [PREFIX_LEAVE, d64.encode(channelId)]
+    const prefix = [PARENT, d64.encode(channelId)]
 
     const itr = iterator(this.db, {
       gte: [...prefix],
@@ -157,11 +151,10 @@ export default class Memory {
     const result = []
 
     for await (const { err, data } of itr) {
-      if (err) {
-        return { err }
-      }
+      if (err) return { err }
 
-      result.push(d64.decode(data.value))
+      const key = data.key.split(',')
+      result.push(d64.decode(key.pop()))
     }
 
     return result
@@ -175,7 +168,7 @@ export default class Memory {
    */
   async hasMessage (channelId, hash) {
     const key = [
-      PREFIX_MSG_IDX,
+      MSG_IDX,
       d64.encode(channelId),
       d64.encode(hash)
     ]
@@ -197,11 +190,7 @@ export default class Memory {
    * @returns {Promise} `Message` instance or `undefined`
    */
   async getMessage (channelId, hash) {
-    const index = [
-      PREFIX_MSG_IDX,
-      d64.encode(channelId),
-      d64.encode(hash)
-    ]
+    const index = [MSG_IDX, d64.encode(channelId), d64.encode(hash)]
 
     let height = 0
 
@@ -211,13 +200,7 @@ export default class Memory {
       return { err }
     }
 
-    const key = [
-      PREFIX_MSG,
-      d64.encode(channelId),
-      height,
-      d64.encode(hash)
-    ]
-
+    const key = [MSG, d64.encode(channelId), height, d64.encode(hash)]
     let value = null
 
     try {
@@ -226,7 +209,7 @@ export default class Memory {
       return { err }
     }
 
-    return value.data
+    return d64.decode(value.data)
   }
 
   /**
@@ -254,25 +237,26 @@ export default class Memory {
    * @returns {Promise} Array of `Message` instances
    */
   async getHashesAtOffset (channelId, offset, limit, reverse) {
-    const prefix = [
-      PREFIX_MSG_IDX,
-      d64.encode(channelId)
-    ]
+    const prefix = [MSG, d64.encode(channelId)]
 
     const params = {
-      gte: [...prefix, offset],
+      gte: [...prefix],
       lte: [...prefix, '~'],
       limit,
+      values: false,
       reverse
     }
 
     const itr = iterator(this.db, params)
 
     const results = []
+    let count = 0
 
     for await (const { err, data } of itr) {
-      if (err) {
-        return { err }
+      if (err) return { err }
+
+      if (offset && (count++ < offset)) {
+        continue
       }
 
       const key = data.key.split(',')
@@ -299,7 +283,7 @@ export default class Memory {
     // We will either know cursor.height or cursor.hash.
     //
     if (cursor.height) {
-      start = [PREFIX_MSG, cid, cursor.height]
+      start = [MSG, cid, cursor.height]
     }
 
     //
@@ -308,7 +292,7 @@ export default class Memory {
     //
     if (cursor.hash) {
       const index = [
-        PREFIX_MSG_IDX,
+        MSG_IDX,
         d64.encode(channelId),
         d64.encode(cursor.hash)
       ]
@@ -322,7 +306,7 @@ export default class Memory {
         return { err }
       }
 
-      start = [PREFIX_MSG, cid, height, d64.encode(cursor.hash)]
+      start = [MSG, cid, height, d64.encode(cursor.hash)]
     }
 
     const params = {
@@ -332,10 +316,10 @@ export default class Memory {
 
     if (isBackward) {
       params.lte = start
-      // params.gte = [PREFIX_MSG, cid]
+      // params.gte = [MSG, cid]
     } else {
       params.gte = start
-      params.lte = [PREFIX_MSG, cid, '~']
+      params.lte = [MSG, cid, '~']
     }
 
     //
@@ -350,9 +334,7 @@ export default class Memory {
     let head = null
 
     for await (const { err, data } of itr) {
-      if (err) {
-        return { err }
-      }
+      if (err) return { err }
 
       lastKey = data.key
       count++
@@ -373,6 +355,7 @@ export default class Memory {
 
     const abbreviatedMessages = results.map(({ hash, parents }) => {
       hash = d64.decode(hash)
+      // parents = this.decodeHashList(parents)
       return { hash, parents }
     })
 
@@ -390,10 +373,10 @@ export default class Memory {
 
     if (isBackward) {
       params2.lt = lastKey
-      params2.gt = [PREFIX_MSG, cid]
+      params2.gt = [MSG, cid]
     } else {
       params2.gt = lastKey
-      params2.lt = [PREFIX_MSG, cid, '~']
+      params2.lt = [MSG, cid, '~']
     }
 
     const itr2 = iterator(this.db, params2)
@@ -401,10 +384,7 @@ export default class Memory {
     let next = null
 
     for await (const { err, data } of itr2) {
-      if (err) {
-        return { err }
-      }
-
+      if (err) return { err }
       next = data.value
     }
 
@@ -421,7 +401,7 @@ export default class Memory {
 
   async removeChannelMessages (channelId) {
     const key = d64.encode(channelId)
-    const prefix = [PREFIX_MSG_IDX, key]
+    const prefix = [MSG_IDX, key]
 
     const itr = iterator(this.db, {
       gte: [...prefix, charwise.LO],
@@ -431,9 +411,7 @@ export default class Memory {
     const batch = []
 
     for await (const { err, data } of itr) {
-      if (err) {
-        return { err }
-      }
+      if (err) return { err }
 
       const { key } = data
 
@@ -450,43 +428,74 @@ export default class Memory {
   //
   // Entities (Identity, ChannelList, so on)
   //
-
   async storeEntity (prefix, id, blob) {
-    let submap
-    if (this.entities.has(prefix)) {
-      submap = this.entities.get(prefix)
-    } else {
-      submap = new Map()
-      this.entities.set(prefix, submap)
+    const key = [ENTITY, prefix, id]
+
+    try {
+      await this.db.put(key, d64.encode(blob))
+    } catch (err) {
+      return { err }
     }
-    submap.set(id, blob)
+
+    return {}
   }
 
   async retrieveEntity (prefix, id) {
-    if (!this.entities.has(prefix)) {
-      return
-    }
-    const submap = this.entities.get(prefix)
+    const key = [ENTITY, prefix, id]
+    let value = null
 
-    if (!submap.has(id)) {
-      return
+    try {
+      value = await this.db.get(key)
+    } catch (err) {
+      if (err.notFound) return false
+      return { err }
     }
-    return submap.get(id)
+
+    return d64.decode(value)
   }
 
   async removeEntity (prefix, id) {
-    if (!this.entities.has(prefix)) {
-      return
+    const key = [ENTITY, prefix, id]
+
+    try {
+      await this.db.del(key)
+    } catch (err) {
+      return { err }
     }
-    const submap = this.entities.get(prefix)
-    submap.delete(id)
   }
 
-  async getEntityKeys (prefix) {
-    if (!this.entities.has(prefix)) {
-      return []
+  async getEntityKeys (namespace) {
+    const prefix = [ENTITY]
+    const params = {
+      gte: [...prefix],
+      lte: [...prefix, '~']
     }
-    return Array.from(this.entities.get(prefix).keys())
+
+    if (namespace) {
+      params.gte.push(namespace)
+      params.lte.splice(1, 0, namespace)
+    }
+
+    const itr = iterator(this.db, params)
+
+    const results = []
+
+    for await (const { err, data } of itr) {
+      if (err) return { err }
+      const key = data.key.split(',')
+      results.push(key.pop())
+    }
+
+    return results
+  }
+
+  async getEntityCount () {
+    const r = await this.getEntityKeys()
+    if (r.err) {
+      return r
+    }
+
+    return r.length
   }
 
   //

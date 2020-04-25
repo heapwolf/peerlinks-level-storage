@@ -30,7 +30,7 @@ describe('Storage', function () {
       channelId,
       hash: Buffer.from(hash),
       height,
-      parents: parents.map((hash) => Buffer.from(hash)),
+      parents: parents.map(hash => Buffer.from(hash)),
       data: Buffer.from(`${height}: ${hash}`)
     }
   }
@@ -39,12 +39,12 @@ describe('Storage', function () {
     const hashes = await storage.getHashesAtOffset(channelId, offset,
       limit)
     const blobs = await storage.getMessages(channelId, hashes)
-    return blobs.map((blob) => blob.toString())
+    return blobs.map(blob => blob.toString())
   }
 
   const leaves = async () => {
     const result = await storage.getLeafHashes(channelId)
-    return result.map((message) => message.toString()).sort()
+    return result.map(message => message.toString()).sort()
   }
 
   it('should store and retrieve messages', async () => {
@@ -175,14 +175,14 @@ describe('Storage', function () {
     await storage.addMessage(msg('c', 1, ['a']))
     assert.deepStrictEqual(await leaves(), ['c'])
 
-    // await storage.addMessage(msg('b', 1, [ 'a' ]))
-    // assert.deepStrictEqual(await leaves(), [ 'b', 'c' ])
+    await storage.addMessage(msg('b', 1, ['a']))
+    assert.deepStrictEqual(await leaves(), ['b', 'c'])
 
-    // await storage.addMessage(msg('d', 2, [ 'b', 'c' ]))
-    // assert.deepStrictEqual(await leaves(), [ 'd' ])
+    await storage.addMessage(msg('d', 2, ['b', 'c']))
+    assert.deepStrictEqual(await leaves(), ['d'])
   })
 
-  /* it('should store and retrieve entities', async () => {
+  it('should store and retrieve entities', async () => {
     class Fake {
       constructor (text) {
         this.text = text
@@ -202,7 +202,7 @@ describe('Storage', function () {
 
     assert.deepStrictEqual(await storage.getEntityKeys('fake'), ['id'])
 
-    const blob = await storage.retrieveEntity('fake', 'id', Fake)
+    const blob = await storage.retrieveEntity('fake', 'id')
     assert.strictEqual(Fake.deserializeData(blob).text, 'hello')
 
     const missing = await storage.retrieveEntity('fake', randomBytes(32), Fake)
@@ -222,7 +222,7 @@ describe('Storage', function () {
     assert.deepStrictEqual(hashes2.map((h) => h.toString()), ['b', 'a'])
   })
 
-  it('should preserve order of hashes in getMessages', async () => {
+  /* it('should preserve order of hashes in getMessages', async () => {
     await storage.addMessage(msg('a', 0))
     await storage.addMessage(msg('c', 1))
     await storage.addMessage(msg('b', 1))
