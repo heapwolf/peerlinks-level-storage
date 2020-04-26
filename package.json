@@ -9,13 +9,12 @@
   "scripts": {
     "lint": "standard src test",
     "test": "npm run mocha && npm run lint",
-    "mocha": "mocha -r esm --reporter=spec test/*-test.js"
+    "mocha": "mocha -b --reporter=spec test/*-test.js"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/heapwolf/peerlinks-storage.git"
   },
-  "type": "module",
   "author": "",
   "license": "ISC",
   "bugs": {

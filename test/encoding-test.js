@@ -1,8 +1,6 @@
 /* eslint-env node, mocha */
-import * as assert from 'assert'
-import { Buffer } from 'buffer'
-
-import Storage from '../'
+const assert = require('assert')
+const Storage = require('../')
 
 describe('encoding', () => {
   let storage = null

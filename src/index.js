@@ -1,10 +1,10 @@
-import level from 'level'
-import charwise from 'charwise'
-import d64 from 'd64'
+const level = require('level')
+const charwise = require('charwise')
+const d64 = require('d64')
 
 const MSG_IDX = 0
 const MSG = 1
-const PARENT = 2
+const LEAVES = 2
 const ENTITY = 3
 
 function iterator (ldb, opts) {
@@ -32,7 +32,7 @@ function iterator (ldb, opts) {
   }
 }
 
-export default class Storage {
+class Storage {
   /**
    * In-memory persistence.
    *
@@ -82,7 +82,6 @@ export default class Storage {
       channelId,
       hash,
       height,
-      // parents: this.encodeHashList(message.parents).map(hash => d64.encode(hash)),
       parents: message.parents.map(hash => d64.encode(hash)),
       data: d64.encode(message.data)
     }
@@ -90,11 +89,11 @@ export default class Storage {
     const batch = [
       { type: 'put', key, value },
       { type: 'put', key: heightByHashIndex, value: height },
-      { type: 'put', key: [PARENT, channelId, hash], value: hash }
+      { type: 'put', key: [LEAVES, channelId, hash], value: hash }
     ]
 
     for (const parentHash of message.parents) {
-      const key = [PARENT, channelId, d64.encode(parentHash)]
+      const key = [LEAVES, channelId, d64.encode(parentHash)]
       batch.push({ type: 'del', key })
     }
 
@@ -140,7 +139,7 @@ export default class Storage {
    * @returns {Promise} array of resulting hashes
    */
   async getLeafHashes (channelId) {
-    const prefix = [PARENT, d64.encode(channelId)]
+    const prefix = [LEAVES, d64.encode(channelId)]
 
     const itr = iterator(this.db, {
       gte: [...prefix],
@@ -523,3 +522,5 @@ export default class Storage {
     return list.map(el => d64.decode(el))
   }
 }
+
+module.exports = Storage

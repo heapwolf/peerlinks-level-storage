@@ -1,9 +1,8 @@
 /* eslint-env node, mocha */
-import * as assert from 'assert'
-import { Buffer } from 'buffer'
-import { randomBytes } from 'crypto'
+const assert = require('assert')
+const { randomBytes } = require('crypto')
 
-import Storage from '../'
+const Storage = require('../')
 
 describe('Storage', function () {
   this.timeout(60000)
