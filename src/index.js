@@ -344,8 +344,6 @@ class Storage {
 
       if (count === 1) {
         head = data.value
-
-        // skip self, according to the protocol, use GT instead?
         if (isBackward) continue
       }
 
@@ -356,11 +354,15 @@ class Storage {
       return { abbreviatedMessages: [], forwardHash: null, backwardHash: null }
     }
 
-    const abbreviatedMessages = results.map(({ hash, parents }) => {
-      hash = d64.decode(hash)
-      // parents = this.decodeHashList(parents)
-      return { hash, parents }
-    })
+    //
+    // TODO make range more strict, range could be leaking, so added filter
+    //
+    const abbreviatedMessages = results
+      .filter(o => o.hash)
+      .map(({ hash, parents }) => {
+        if (hash) hash = d64.decode(hash)
+        return { hash, parents }
+      })
 
     const result = {
       abbreviatedMessages
@@ -392,10 +394,10 @@ class Storage {
     }
 
     if (isBackward) {
-      result.forwardHash = d64.decode(head.hash)
+      result.forwardHash = head ? d64.decode(head.hash) : null
       result.backwardHash = next ? d64.decode(next.hash) : null
     } else {
-      result.backwardHash = d64.decode(head.hash)
+      result.backwardHash = head ? d64.decode(head.hash) : null
       result.forwardHash = next ? d64.decode(next.hash) : null
     }
 
