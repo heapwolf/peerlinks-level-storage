@@ -1,6 +1,5 @@
-import { Buffer } from 'buffer'
 import level from 'level'
-import charwise from 'charwise-compact'
+import charwise from 'charwise'
 import d64 from 'd64'
 
 const MSG_IDX = 0
@@ -416,6 +415,10 @@ export default class Memory {
 
     for await (const { err, data } of itr) {
       if (err) return { err }
+
+      // delete the index and the key
+      const index = [MSG_IDX, key, data.key.split(',').pop()]
+      batch.push({ type: 'del', key: index })
       batch.push({ type: 'del', key: data.key })
     }
 
@@ -508,46 +511,15 @@ export default class Memory {
   async clear () {
   }
 
+  //
   // Private
+  //
 
   encodeHashList (list) {
-    let size = 0
-
-    for (const elem of list) {
-      if (elem.length > 0xff) {
-        throw new Error('Invalid hash')
-      }
-      size += 1 + elem.length
-    }
-
-    const result = Buffer.alloc(size)
-
-    let offset = 0
-
-    for (const elem of list) {
-      result[offset] = elem.length
-      offset++
-
-      elem.copy(result, offset)
-      offset += elem.length
-    }
-
-    return result
+    return list.map(el => d64.encode(el))
   }
 
-  decodeHashList (data) {
-    const result = []
-
-    for (let offset = 0; offset < data.length;) {
-      const len = data[offset]
-      offset++
-
-      const hash = data.slice(offset, offset + len)
-      offset += len
-
-      result.push(hash)
-    }
-
-    return result
+  decodeHashList (list) {
+    return list.map(el => d64.decode(el))
   }
 }

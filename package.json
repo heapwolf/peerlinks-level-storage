@@ -22,7 +22,7 @@
   },
   "homepage": "https://github.com/heapwolf/peerlinks-storage#readme",
   "dependencies": {
-    "charwise-compact": "^4.1.0",
+    "charwise": "^3.0.1",
     "d64": "^1.0.0",
     "level": "^6.0.1"
   },
