@@ -112,7 +112,7 @@ export default class Storage {
    * @returns {Promise}
    */
   async getMessageCount (channelId) {
-    const prefix = [MSG]
+    const prefix = [MSG, d64.encode(channelId)]
     const params = {
       gte: [...prefix],
       lte: [...prefix, '~']
