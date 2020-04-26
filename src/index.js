@@ -32,7 +32,7 @@ function iterator (ldb, opts) {
   }
 }
 
-export default class Memory {
+export default class Storage {
   /**
    * In-memory persistence.
    *
