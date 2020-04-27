@@ -48,7 +48,7 @@ class Storage {
 
     const opts = {
       encode: JSON.stringify,
-      keyEncode: charwise.encode,
+      keyEncoding: charwise,
       valueEncoding: 'json',
       decode: JSON.parse
     }
@@ -73,7 +73,7 @@ class Storage {
     const hash = d64.encode(message.hash)
 
     // The key will be scanable and contain data (fast ranges)
-    const key = [MSG, channelId, height, hash]
+    const key = [MSG, channelId, Number(height), hash]
 
     // An index to directly look up a message
     const heightByHashIndex = [MSG_IDX, channelId, hash]
@@ -88,7 +88,7 @@ class Storage {
 
     const batch = [
       { type: 'put', key, value },
-      { type: 'put', key: heightByHashIndex, value: Number(height) },
+      { type: 'put', key: heightByHashIndex, value: height },
       { type: 'put', key: [LEAVES, channelId, hash], value: hash }
     ]
 
@@ -150,9 +150,7 @@ class Storage {
 
     for await (const { err, data } of itr) {
       if (err) return { err }
-
-      const key = data.key.split(',')
-      result.push(d64.decode(key.pop()))
+      result.push(d64.decode(data.key.pop()))
     }
 
     return result
@@ -262,8 +260,7 @@ class Storage {
         continue
       }
 
-      const key = data.key.split(',')
-      results.push(d64.decode(key.pop()))
+      results.push(d64.decode(data.key.pop()))
     }
 
     return results
@@ -419,7 +416,7 @@ class Storage {
       if (err) return { err }
 
       // delete the index and the key
-      const index = [MSG_IDX, key, data.key.split(',').pop()]
+      const index = [MSG_IDX, key, data.key.pop()]
       batch.push({ type: 'del', key: index })
       batch.push({ type: 'del', key: data.key })
     }
@@ -449,6 +446,10 @@ class Storage {
   }
 
   async retrieveEntity (prefix, id) {
+    if (typeof id !== 'string') {
+      id = String(id)
+    }
+
     const key = [ENTITY, prefix, id]
     let value = null
 
@@ -456,6 +457,7 @@ class Storage {
       value = await this.db.get(key)
     } catch (err) {
       if (err.notFound) return false
+      console.log(err)
       return { err }
     }
 
@@ -490,8 +492,7 @@ class Storage {
 
     for await (const { err, data } of itr) {
       if (err) return { err }
-      const key = data.key.split(',')
-      results.push(key.pop())
+      results.push(data.key.pop())
     }
 
     return results

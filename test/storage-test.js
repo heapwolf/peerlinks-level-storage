@@ -94,6 +94,10 @@ describe('Storage', function () {
     await storage.addMessage(msg('b', 1))
     await storage.addMessage(msg('d', 2))
 
+    //
+    // TODO propose an more robust ordering test
+    //
+
     {
       const result = await storage.query(channelId, { height: 1 }, false, 2)
       assert.strictEqual(result.abbreviatedMessages.length, 2)
