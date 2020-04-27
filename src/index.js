@@ -88,7 +88,7 @@ class Storage {
 
     const batch = [
       { type: 'put', key, value },
-      { type: 'put', key: heightByHashIndex, value: height },
+      { type: 'put', key: heightByHashIndex, value: Number(height) },
       { type: 'put', key: [LEAVES, channelId, hash], value: hash }
     ]
 
@@ -198,7 +198,7 @@ class Storage {
       return { err }
     }
 
-    const key = [MSG, d64.encode(channelId), height, d64.encode(hash)]
+    const key = [MSG, d64.encode(channelId), Number(height), d64.encode(hash)]
     let value = null
 
     try {
@@ -286,7 +286,7 @@ class Storage {
     // We will either know cursor.height or cursor.hash.
     //
     if (cursor.height) {
-      start = [MSG, cid, cursor.height]
+      start = [MSG, cid, Number(cursor.height)]
     }
 
     //
@@ -309,7 +309,7 @@ class Storage {
         return { err }
       }
 
-      start = [MSG, cid, height, d64.encode(cursor.hash)]
+      start = [MSG, cid, Number(height), d64.encode(cursor.hash)]
     }
 
     const params = {
