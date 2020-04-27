@@ -361,6 +361,7 @@ class Storage {
       .filter(o => o.hash)
       .map(({ hash, parents }) => {
         if (hash) hash = d64.decode(hash)
+        if (parents) parents = this.decodeHashList(parents)
         return { hash, parents }
       })
 
@@ -394,11 +395,11 @@ class Storage {
     }
 
     if (isBackward) {
-      result.forwardHash = head ? d64.decode(head.hash) : null
-      result.backwardHash = next ? d64.decode(next.hash) : null
+      result.forwardHash = head && head.hash ? d64.decode(head.hash) : null
+      result.backwardHash = next && next.hash ? d64.decode(next.hash) : null
     } else {
-      result.backwardHash = head ? d64.decode(head.hash) : null
-      result.forwardHash = next ? d64.decode(next.hash) : null
+      result.backwardHash = head && head.hash ? d64.decode(head.hash) : null
+      result.forwardHash = next && next.hash ? d64.decode(next.hash) : null
     }
 
     return result
